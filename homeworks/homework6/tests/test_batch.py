@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 from datetime import datetime
+import pickle
 
 def dt(hour, minute, second=0):
     return datetime(2021, 1, 1, hour, minute, second)
@@ -13,7 +14,7 @@ data = [
 ]
 
 columns = ['PUlocationID', 'DOlocationID', 'pickup_datetime', 'dropOff_datetime']
-df = pd.DataFrame(data, columns=columns)
+test_data = pd.DataFrame(data, columns=columns)
 
 def prepare_data(df):
     
@@ -29,7 +30,7 @@ def prepare_data(df):
     
 
 def test_dataframe():
-    actual_df = prepare_data(df)
+    actual_df = prepare_data(test_data)
     
     data = [
         (-1, -1, dt(1, 2), dt(1, 10), 8.0),
@@ -53,7 +54,7 @@ options = {
 
 def test_localstack():
 
-    df.to_parquet(
+    test_data.to_parquet(
         's3://demo-bucket/file.parquet',
         engine='pyarrow',
         compression=None,
@@ -61,4 +62,30 @@ def test_localstack():
         storage_options=options
     )
     
-    return
+    df = pd.read_parquet('s3://demo-bucket/file.parquet', storage_options=options)
+    
+    with open('model.bin', 'rb') as f_in:
+        dv, lr = pickle.load(f_in)
+
+    categorical = ['PUlocationID', 'DOlocationID']
+
+    df['duration'] = df.dropOff_datetime - df.pickup_datetime
+    df['duration'] = df.duration.dt.total_seconds() / 60
+
+    df = df[(df.duration >= 1) & (df.duration <= 60)].copy()
+
+    df[categorical] = df[categorical].fillna(-1).astype('int').astype('str')
+    
+    dicts = df[categorical].to_dict(orient='records')
+    X_val = dv.transform(dicts)
+    y_pred = lr.predict(X_val)
+
+    print('predicted mean duration:', y_pred.mean(),'\n',
+          'predicted sum duration:', y_pred.sum())
+
+    df_result = pd.DataFrame()
+    df_result['predicted_duration'] = y_pred
+    
+    return 
+
+test_localstack()
